@@ -1,0 +1,107 @@
+let model, webcam, labelContainer, maxPredictions;
+let serial;
+let port;
+const baudRate = 9600;
+
+// Teachable Machine 모델 URL
+const URL = "https://teachablemachine.withgoogle.com/models/zDJA53z3s/";
+
+async function setup() {
+  createCanvas(640, 480);
+  
+  // 모델 로드
+  const modelURL = URL + "model.json";
+  const metadataURL = URL + "metadata.json";
+  model = await tmImage.load(modelURL, metadataURL);
+  maxPredictions = model.getTotalClasses();
+
+  // 웹캠 설정
+  const flip = true;
+  webcam = new tmImage.Webcam(200, 200, flip);
+  try {
+    await webcam.setup();
+    await webcam.play();
+    window.requestAnimationFrame(predictLoop);
+  } catch (err) {
+    console.error('웹캠 설정 중 오류가 발생했습니다:', err);
+    alert('웹캠 설정 중 오류가 발생했습니다. 웹캠 권한을 확인하세요.');
+    return;
+  }
+
+  // 시리얼 포트 연결 버튼 추가
+  let button = createButton('Connect to Arduino');
+  button.mousePressed(connectToArduino);
+
+  // 라벨 컨테이너 생성
+  labelContainer = createDiv().style('font-size', '24px');
+}
+
+async function predictLoop() {
+  webcam.update(); // 웹캠 프레임 업데이트
+  await predict();
+  window.requestAnimationFrame(predictLoop);
+}
+
+async function predict() {
+  const prediction = await model.predict(webcam.canvas);
+  let result = '';
+
+  for (let i = 0; i < maxPredictions; i++) {
+    const classPrediction = prediction[i].className + ": " + prediction[i].probability.toFixed(2);
+    result += classPrediction + '<br>';
+    console.log(prediction[i].className, prediction[i].probability);
+
+    if (prediction[i].probability > 0.99) {
+      if (serial) {
+        let data = '';
+        if (prediction[i].className === '페트병') {
+          data = '페트병\n';
+        } else if (prediction[i].className === '캔') {
+          data = '캔\n';
+        } else if (prediction[i].className === '유리병') {
+          data = '유리병\n';
+        } else if (prediction[i].className === 'X') {
+          data = 'X\n';
+        }
+        if (data) {
+          serial.write(data);
+        }
+      }
+    }
+  }
+  labelContainer.html(result);
+}
+
+async function connectToArduino() {
+  try {
+    alert("시리얼 포트를 선택하세요."); // 사용자 안내 메시지
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: baudRate });
+    serial = new SerialPort(port);
+    console.log('Arduino에 성공적으로 연결되었습니다.');
+  } catch (error) {
+    console.error('Arduino에 연결하는 중 오류가 발생했습니다:', error);
+  }
+}
+
+class SerialPort {
+  constructor(port) {
+    this.port = port;
+    this.writer = port.writable.getWriter();
+  }
+
+  async write(data) {
+    const encoder = new TextEncoder();
+    await this.writer.write(encoder.encode(data));
+  }
+}
+
+function draw() {
+  background(255);
+  if (webcam && webcam.canvas) {
+    // p5.js 이미지 객체로 변환하여 그리기
+    let camImage = createImage(webcam.canvas.width, webcam.canvas.height);
+    camImage.drawingContext.drawImage(webcam.canvas, 0, 0);
+    image(camImage, 0, 0, width, height);
+  }
+}
